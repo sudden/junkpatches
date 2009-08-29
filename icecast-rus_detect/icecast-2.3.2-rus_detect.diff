@@ -1,0 +1,180 @@
+diff -ruN icecast-2.3.2.orig/configure.in icecast-2.3.2.todiff/configure.in
+--- icecast-2.3.2.orig/configure.in	2008-05-27 05:21:38.000000000 +0500
++++ icecast-2.3.2.todiff/configure.in	2009-08-29 19:11:23.000000000 +0500
+@@ -7,7 +7,6 @@
+ AM_INIT_AUTOMAKE
+ AM_CONFIG_HEADER(config.h)
+ AM_MAINTAINER_MODE
+-
+ AC_PROG_CC
+ AC_CANONICAL_HOST
+ AC_PROG_LIBTOOL
+@@ -132,8 +131,14 @@
+     [ AC_MSG_NOTICE([SSL disabled!])
+     ])
+ 
++AM_ICONV
++if test "$am_cv_func_iconv" != yes; then
++  AC_MSG_ERROR([Could not find libiconv (required for rus_detect)])
++fi
++ 
+ dnl Make substitutions
+ 
++AC_SUBST(LIBICONV)
+ AC_SUBST(XIPH_CPPFLAGS)
+ AC_SUBST(XIPH_CFLAGS)
+ AC_SUBST(XIPH_LIBS)
+diff -ruN icecast-2.3.2.orig/src/Makefile.am icecast-2.3.2.todiff/src/Makefile.am
+--- icecast-2.3.2.orig/src/Makefile.am	2008-04-19 05:27:09.000000000 +0500
++++ icecast-2.3.2.todiff/src/Makefile.am	2009-08-29 19:01:41.000000000 +0500
+@@ -12,12 +12,12 @@
+     auth.h auth_htpasswd.h auth_url.h \
+     format.h format_ogg.h format_mp3.h \
+     format_vorbis.h format_theora.h format_flac.h format_speex.h format_midi.h \
+-    format_kate.h format_skeleton.h
++    format_kate.h format_skeleton.h rus_detect.h
+ icecast_SOURCES = cfgfile.c main.c logging.c sighandler.c connection.c global.c \
+     util.c slave.c source.c stats.c refbuf.c client.c \
+     xslt.c fserve.c event.c admin.c md5.c \
+     format.c format_ogg.c format_mp3.c format_midi.c format_flac.c \
+-    auth.c auth_htpasswd.c format_kate.c format_skeleton.c
++    auth.c auth_htpasswd.c format_kate.c format_skeleton.c rus_detect.c
+ EXTRA_icecast_SOURCES = yp.c \
+     auth_url.c \
+     format_vorbis.c format_theora.c format_speex.c
+diff -ruN icecast-2.3.2.orig/src/format_vorbis.c icecast-2.3.2.todiff/src/format_vorbis.c
+--- icecast-2.3.2.orig/src/format_vorbis.c	2007-09-13 03:40:55.000000000 +0500
++++ icecast-2.3.2.todiff/src/format_vorbis.c	2009-08-29 19:08:00.000000000 +0500
+@@ -498,7 +498,6 @@
+     return make_refbuf_with_page (page);
+ }
+ 
+-
+ /* handle incoming page. as the stream is being rebuilt, we need to
+  * add all pages from the stream before processing packets
+  */
+@@ -508,6 +507,7 @@
+     ogg_packet header;
+     vorbis_codec_t *source_vorbis = codec->specific;
+     char *comment;
++    char *converted=NULL;
+ 
+     if (ogg_stream_pagein (&codec->os, page) < 0)
+     {
+@@ -566,16 +566,24 @@
+ 
+     free (ogg_info->title);
+     comment = vorbis_comment_query (&source_vorbis->vc, "TITLE", 0);
+-    if (comment)
+-        ogg_info->title = strdup (comment);
+-    else
++    if (comment) {
++	converted=try_tag_conversion(comment);
++	if (converted!=NULL)
++	    ogg_info->title=converted;
++	else
++    	    ogg_info->title = strdup (comment);
++    } else
+         ogg_info->title = NULL;
+ 
+     free (ogg_info->artist);
+     comment = vorbis_comment_query (&source_vorbis->vc, "ARTIST", 0);
+-    if (comment)
+-        ogg_info->artist = strdup (comment);
+-    else
++    if (comment) {
++        converted=try_tag_conversion(comment);
++        if (converted!=NULL)
++	    ogg_info->artist = converted;
++	else
++            ogg_info->artist = strdup (comment);
++    } else
+         ogg_info->artist = NULL;
+     ogg_info->log_metadata = 1;
+ 
+diff -ruN icecast-2.3.2.orig/src/rus_detect.c icecast-2.3.2.todiff/src/rus_detect.c
+--- icecast-2.3.2.orig/src/rus_detect.c	1970-01-01 04:00:00.000000000 +0400
++++ icecast-2.3.2.todiff/src/rus_detect.c	2009-08-29 19:08:41.000000000 +0500
+@@ -0,0 +1,72 @@
++#include <stdlib.h>
++#include <string.h>
++#include <iconv.h>
++
++#define CATMODULE "rus_detect" 
++#include "logging.h"
++
++/*
++ *  /!\  CAUTION: UGLY HACKS AHEAD! /!\
++ *                不意
++ */
++char *try_tag_conversion(const char *tag) {
++    int taglen = 0;
++    char *inbuf;
++    char *tempbuf;
++    char *outbuf;
++    char *tempbuf2;
++    size_t inbytes = 0;
++    size_t outbytes = 0;
++
++    if (!tag)
++	return NULL;
++    if (!xmlCheckUTF8((unsigned char *)tag))
++	return NULL;
++    taglen = strlen(tag);
++    if (!taglen)
++	return NULL;
++    iconv_t cd;
++    cd = iconv_open("latin1","UTF-8");
++    if (cd==(iconv_t)-1) {
++	WARN0("iconv_open failed");
++	return NULL;
++    }
++    
++    inbuf = tag;
++    tempbuf = calloc(1, taglen); // latin1 is single-byte. string won't be cropped.
++    memset(tempbuf,0,taglen);
++    outbuf = tempbuf;
++    inbytes = taglen;
++    outbytes = taglen;
++    
++    int conv_result=iconv(cd,&inbuf,&inbytes,&outbuf,&outbytes);
++    if (conv_result==(size_t)-1) { // fail. it's not missconverted cp1251
++	//WARN3("iconv: not an cp1251 %d: %s | %s",conv_result,tag,tempbuf);
++	free(tempbuf);
++	iconv_close(cd);
++	return NULL;
++    }
++    // oh, yeah, here we go! it's missconverted cp1251! (or may be real latin1 :< )
++    iconv_close(cd);
++    cd = iconv_open("UTF-8","CP1251");
++    inbuf = tempbuf;
++    tempbuf2 = calloc(1,taglen);
++    outbuf = tempbuf2;
++    inbytes = taglen - outbytes;
++    outbytes = taglen;
++
++    if (iconv(cd,&inbuf,&inbytes,&outbuf,&outbytes)==(size_t)-1) {
++	// fuck. failed again.
++	WARN1("iconv: failed to fix: %s",tempbuf);
++	free(tempbuf);
++	free(tempbuf2);
++	iconv_close(cd);
++	return NULL;
++    } else {
++	// SUCCESS!
++	free(tempbuf);
++	iconv_close(cd);
++	return tempbuf2;
++    }
++	
++}
+diff -ruN icecast-2.3.2.orig/src/rus_detect.h icecast-2.3.2.todiff/src/rus_detect.h
+--- icecast-2.3.2.orig/src/rus_detect.h	1970-01-01 04:00:00.000000000 +0400
++++ icecast-2.3.2.todiff/src/rus_detect.h	2009-08-29 18:55:36.000000000 +0500
+@@ -0,0 +1,6 @@
++#ifndef __RUS_DETECT_H__
++#define __RUS_DETECT_H__
++
++char *try_tag_conversion(const char *tag);
++
++#endif  /* __RUS_DETECT_H__ */
