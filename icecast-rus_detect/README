@@ -1,2 +1,7 @@
 Этот патч помогает когда используются windows-клиенты icecast, ошибочно
 перекодирующие теги в cp1251 как latin1->UTF-8 при вещании OGG/Vorbis
+Специально для radioanon.ru, которое очень без этого страдает.
+
+После применения патча делать autoreconf.
+Если будет ругаться на config.rpath - touch config.rpath
+Если на сборке будет ругаться на libtool - libtoolize, а потом заново configure
