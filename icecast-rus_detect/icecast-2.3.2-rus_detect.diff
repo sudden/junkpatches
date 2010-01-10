@@ -131,8 +131,8 @@ diff -ruN icecast-2.3.2.orig/src/rus_detect.c icecast-2.3.2.todiff/src/rus_detec
 +    }
 +    
 +    inbuf = tag;
-+    tempbuf = calloc(1, taglen); // latin1 is single-byte. string won't be cropped.
-+    memset(tempbuf,0,taglen);
++    tempbuf = calloc(1, taglen+1); // latin1 is single-byte. string won't be cropped.
++    memset(tempbuf,0,taglen+1);
 +    outbuf = tempbuf;
 +    inbytes = taglen;
 +    outbytes = taglen;
@@ -148,7 +148,7 @@ diff -ruN icecast-2.3.2.orig/src/rus_detect.c icecast-2.3.2.todiff/src/rus_detec
 +    iconv_close(cd);
 +    cd = iconv_open("UTF-8","CP1251");
 +    inbuf = tempbuf;
-+    tempbuf2 = calloc(1,taglen);
++    tempbuf2 = calloc(1,taglen+1); memset(tempbuf2,0,taglen+1);
 +    outbuf = tempbuf2;
 +    inbytes = taglen - outbytes;
 +    outbytes = taglen;
